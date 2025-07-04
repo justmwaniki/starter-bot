@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deriv Over/Under Bot</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(to right, #141e30, #243b55);
+      color: #fff;
+      padding: 2em;
+      text-align: center;
+    }
+    h1 {
+      color: #00ffc8;
+      margin-bottom: 1em;
+    }
+    input, select, button {
+      font-size: 1em;
+      padding: 0.6em;
+      margin: 0.5em;
+      border: none;
+      border-radius: 8px;
+      outline: none;
+    }
+    input, select {
+      width: 250px;
+    }
+    button {
+      background-color: #00ffc8;
+      color: #000;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    button:hover {
+      background-color: #00bfa6;
+    }
+    .log {
+      background-color: #111;
+      padding: 1em;
+      border-radius: 10px;
+      box-shadow: 0 0 10px rgba(0, 255, 200, 0.3);
+      text-align: left;
+      max-width: 700px;
+      margin: 2em auto;
+      height: 250px;
+      overflow-y: auto;
+      font-size: 0.95em;
+    }
+    .balance {
+      margin-top: 1em;
+      font-size: 1.2em;
+      color: #ffd700;
+    }
+  </style>
+</head>
+<body>
+  <h1>🧠 Deriv Over/Under Bot</h1>
+
+  <input id="apiToken" type="password" placeholder="Paste Deriv API Token" />
+  <button onclick="checkToken()">✅ Check Token</button>
+  <div class="balance" id="balance"></div>
+
+  <br><br>
+
+  <select id="symbol">
+    <option value="R_50">Volatility 50 Index</option>
+    <option value="BEARMARKET">Bear Market Index</option>
+  </select>
+  <select id="prediction">
+    <option value="over">Digit Over</option>
+    <option value="under">Digit Under</option>
+  </select>
+  <input id="stake" type="number" placeholder="Stake (e.g. 0.35)" step="0.01" />
+  <input id="duration" type="number" placeholder="Duration (ticks)" value="3" />
+  <br>
+  <button onclick="startBot()">🚀 Start Bot</button>
+
+  <div class="log" id="log"></div>
+
+  <script>
+    let ws;
+    let apiToken = "";
+
+    function log(msg) {
+      const logDiv = document.getElementById("log");
+      const time = new Date().toLocaleTimeString();
+      logDiv.innerHTML = `<div>[${time}] ${msg}</div>` + logDiv.innerHTML;
+    }
+
+    function checkToken() {
+      apiToken = document.getElementById("apiToken").value.trim();
+      if (!apiToken) {
+        log("❌ Please paste a token first.");
+        return;
+      }
+      ws = new WebSocket("wss://ws.derivws.com/websockets/v3/websocket");
+      ws.onopen = () => {
+        log("🌐 Connecting to Deriv...");
+        ws.send(JSON.stringify({ authorize: apiToken }));
+      };
+      ws.onmessage = (msg) => {
+        const data = JSON.parse(msg.data);
+        if (data.error) {
+          log("❌ Token Error: " + data.error.message);
+          document.getElementById("balance").innerText = "";
+          ws.close();
+          return;
+        }
+        if (data.msg_type === "authorize") {
+          log("🔐 Authorized as: " + data.authorize.loginid);
+          getBalance();
+        }
+        if (data.msg_type === "balance") {
+          const bal = parseFloat(data.balance.balance).toFixed(2);
+          document.getElementById("balance").innerText = `💰 Balance: $${bal}`;
+          log(`💰 Account balance: $${bal}`);
+          ws.close();
+        }
+      };
+      ws.onerror = () => log("❌ WebSocket Error");
+      ws.onclose = () => log("🔌 WebSocket closed");
+    }
+
+    function getBalance() {
+      ws.send(JSON.stringify({ balance: 1, subscribe: 0 }));
+    }
+
+    function startBot() {
+      apiToken = document.getElementById("apiToken").value.trim();
+      const symbol = document.getElementById("symbol").value;
+      const stake = parseFloat(document.getElementById("stake").value);
+      const duration = parseInt(document.getElementById("duration").value);
+      const prediction = document.getElementById("prediction").value;
+      const barrier = 3; // fixed barrier for over/under
+
+      if (!apiToken || !stake || !duration) {
+        log("❌ Please fill in all fields.");
+        return;
+      }
+
+      ws = new WebSocket("wss://ws.derivws.com/websockets/v3/websocket");
+      ws.onopen = () => {
+        log("🌐 Connecting to Deriv...");
+        ws.send(JSON.stringify({ authorize: apiToken }));
+      };
+
+      ws.onmessage = (msg) => {
+        const data = JSON.parse(msg.data);
+        if (data.error) {
+          log("❌ Error: " + data.error.message);
+          return;
+        }
+
+        if (data.msg_type === "authorize") {
+          log("🔐 Authorized: " + data.authorize.loginid);
+
+          const contractType = prediction === "over" ? "DIGITOVER" : "DIGITUNDER";
+
+          ws.send(
+            JSON.stringify({
+              buy: 1,
+              price: stake,
+              parameters: {
+                amount: stake,
+                basis: "stake",
+                contract_type: contractType,
+                currency: "USD",
+                duration: duration,
+                duration_unit: "t",
+                symbol: symbol,
+                barrier: barrier
+              }
+            })
+          );
+
+          log(`📤 Placing ${prediction.toUpperCase()} trade on ${symbol}`);
+        }
+
+        if (data.msg_type === "proposal_open_contract") {
+          const status = data.proposal_open_contract;
+          if (status.is_sold) {
+            const result = status.profit > 0 ? "✅ Win" : "❌ Loss";
+            log(`${result}: Profit: $${status.profit.toFixed(2)}`);
+          }
+        }
+      };
+
+      ws.onerror = () => log("❌ WebSocket Error");
+      ws.onclose = () => log("🔌 Disconnected");
+    }
+  </script>
+</body>
+</html>
