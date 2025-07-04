@@ -69,23 +69,36 @@
     function checkToken() {
       token = document.getElementById("token").value.trim();
       if (!token) return log("❌ Token is required");
-      ws = new WebSocket("wss://ws.derivws.com/websockets/v3/websocket");
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ authorize: token }));
+
+      const testWS = new WebSocket("wss://ws.derivws.com/websockets/v3/websocket");
+
+      testWS.onopen = () => {
+        testWS.send(JSON.stringify({ authorize: token }));
       };
-      ws.onmessage = (msg) => {
+
+      testWS.onmessage = (msg) => {
         const data = JSON.parse(msg.data);
-        if (data.error) return log("❌ Error: " + data.error.message);
-        if (data.msg_type === "authorize") {
-          log(`✅ Authorized: ${data.authorize.loginid}`);
-          ws.send(JSON.stringify({ balance: 1 }));
+
+        if (data.error) {
+          log(`❌ Token invalid: ${data.error.message}`);
+          testWS.close();
+          return;
         }
+
+        if (data.msg_type === "authorize") {
+          log(`✅ Token OK: ${data.authorize.loginid}`);
+          testWS.send(JSON.stringify({ balance: 1 }));
+        }
+
         if (data.msg_type === "balance") {
+          log(`💰 Balance: $${data.balance.balance.toFixed(2)}`);
           balanceStart = data.balance.balance;
-          log(`💰 Starting Balance: $${balanceStart.toFixed(2)}`);
-          ws.close();
+          testWS.close();
         }
       };
+
+      testWS.onerror = () => log("❌ WebSocket Error (check network or firewall)");
+      testWS.onclose = () => log("🔌 Token test complete");
     }
 
     function startBot() {
